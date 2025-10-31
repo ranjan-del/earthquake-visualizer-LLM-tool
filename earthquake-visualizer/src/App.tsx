@@ -1,90 +1,141 @@
-import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Tooltip } from "react-leaflet";
-import type { LatLngExpression } from "leaflet";
-
-// Basic quake type
-type Quake = {
-  id: string;
-  mag: number;
-  time: number;
-  place: string;
-  coords: { lat: number; lng: number };
-};
+import { useEffect, useMemo, useState } from "react";
+import { useGeolocation } from "./hooks/useGeolocation";
+import { useQuakes } from "./hooks/useQuakes";
+import type { Quake, TimeWindow } from "./types";
+import MapView from "./components/MapView";
+import StatusChip from "./components/StatusChip";
+import FiltersPanel from "./components/FiltersPanel";
+import { classifyStatus } from "./utils/status";
+import QuakeDetailsDrawer from "./components/QuakeDetailsDrawer";
+import { useSearchParams } from "react-router-dom";
+import InfoPanel from "./components/InfoPanel";
+import Modal from "./components/Modal";
+import { explainStatus } from "./api/llm";
+import { type RiskContext } from "./llm/riskExplainer";
 
 export default function App() {
-  const [center, setCenter] = useState<LatLngExpression>([20, 0]); // world
-  const [quakes, setQuakes] = useState<Quake[]>([]);
-  const [loading, setLoading] = useState(true);
+  // const [window, setWindow] = useState<TimeWindow>("day");
+  // const [minMag, setMinMag] = useState(0);
+  // const [radiusKm, setRadiusKm] = useState(25);
+  const [selected, setSelected] = useState<Quake | null>(null);
+  const { pos: userPos } = useGeolocation();
+  const [sp, setSp] = useSearchParams();
+  const [panelOpen, setPanelOpen] = useState(false);
+  
+  // read initial from URL (with fallbacks)
+  const initialWindow = (sp.get("w") as TimeWindow) || "day";
+  const initialMinMag = Number(sp.get("m") ?? 0);
+  const initialRadius = Number(sp.get("r") ?? 25);
+  
+  const [window, setWindow] = useState<TimeWindow>(initialWindow);
+  const [minMag, setMinMag] = useState(initialMinMag);
+  const [radiusKm, setRadiusKm] = useState(initialRadius);
+  const { data: quakes = [], isLoading, isError } = useQuakes(window);
 
-  // Geolocate on load
-  useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => setCenter([pos.coords.latitude, pos.coords.longitude]),
-        () => {} // ignore error; keep default world view
-      );
-    }
-  }, []);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const [whyText, setWhyText] = useState<string>("");
 
-  // Fetch USGS all-day feed
+  async function onWhyClick() {
+    setWhyOpen(true);
+    setWhyText("Generating…");
+    const ctx: RiskContext = {
+      status,
+      userPos,
+      minMag,
+      radiusKm,
+      window,
+      quakes
+    };
+    const summary = await explainStatus(ctx);
+    setWhyText(summary);
+  }
+
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const res = await fetch(
-        "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
-      );
-      const data = await res.json();
-      const normalized: Quake[] = data.features.map((f: any) => ({
-        id: f.id,
-        mag: f.properties.mag ?? 0,
-        time: f.properties.time,
-        place: f.properties.place ?? "Unknown",
-        coords: { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] },
-      }));
-      setQuakes(normalized);
-      setLoading(false);
-    })();
-  }, []);
+    const next = new URLSearchParams(sp);
+    next.set("w", window);
+    next.set("m", String(minMag));
+    next.set("r", String(radiusKm));
+    setSp(next, { replace: true });
+  }, [window, minMag, radiusKm]);
+
+  const center = useMemo<[number, number]>(() => {
+    if (userPos) return [userPos.lat, userPos.lng];
+    return [20, 0]; // world default
+  }, [userPos]);
+
+  const status = classifyStatus(userPos, quakes, { radiusKm, warnMaxKm: 50, alertMag: 4.5 });
 
   return (
-    <div className="h-full w-full flex flex-col">
-      <header className="border-b p-3 flex items-center justify-between">
-        <h1 className="font-semibold">Earthquake Visualizer (MVP)</h1>
-        <span className="text-sm text-gray-500">
-          {loading ? "Loading..." : `${quakes.length} events (past 24h)`}
+    <div className="min-h-screen flex flex-col">   {/* was h-full */}
+    <header className="p-3 border-b bg-white/70 backdrop-blur flex justify-between items-center">
+      <h1 className="font-semibold">Earthquake Visualizer</h1>
+      <div className="flex items-center gap-3">   {/* add gap so text and chip don't touch */}
+        <span className="text-sm text-gray-600">
+          {isLoading ? "Loading…" : isError ? "Failed to load" : `${quakes.length} events`}
         </span>
-      </header>
-
-      <div className="flex-1">
-        <MapContainer center={center} zoom={3} className="h-full w-full">
-          <TileLayer
-            attribution='&copy; OpenStreetMap contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          {quakes.map((q) => {
-            const color =
-              q.mag >= 5 ? "#ef4444" : q.mag >= 3 ? "#f59e0b" : "#22c55e";
-            const radius = Math.max(4, q.mag * 2);
-            return (
-              <CircleMarker
-                key={q.id}
-                center={[q.coords.lat, q.coords.lng]}
-                radius={radius}
-                pathOptions={{ color, fillColor: color, fillOpacity: 0.6 }}
-              >
-                <Tooltip>
-                  <div className="text-sm">
-                    <div><b>M {q.mag.toFixed(1)}</b></div>
-                    <div>{q.place}</div>
-                    <div>{new Date(q.time).toLocaleString()}</div>
-                  </div>
-                </Tooltip>
-              </CircleMarker>
-            );
-          })}
-        </MapContainer>
+        <button
+            onClick={onWhyClick}
+            className="px-3 py-1 text-sm border rounded hover:bg-gray-50"
+            title="Explain why this status is shown"
+          >
+            Why this status?
+          </button>
+        <button
+            onClick={() => setPanelOpen((v) => !v)}
+            className="px-3 py-1 text-sm border rounded hover:bg-gray-50"
+            title="Toggle info panel"
+          >
+            {panelOpen ? "Hide info" : "Show info"}
+          </button>
+        <StatusChip status={status} />
       </div>
+    </header>
+
+    <Modal open={whyOpen} onClose={() => setWhyOpen(false)} title="Why this status?">
+        <p className="whitespace-pre-wrap">{whyText}</p>
+        <p className="mt-3 text-xs text-gray-500">
+          Note: Informational summary only; not safety guidance.
+        </p>
+      </Modal>
+
+      {/* Filters */}
+      <FiltersPanel
+        window={window}
+        onWindowChange={setWindow}
+        minMag={minMag}
+        onMinMagChange={setMinMag}
+        radiusKm={radiusKm}
+        onRadiusChange={setRadiusKm}
+      />
+
+      {/* Map */}
+      <div className="w-full h-[calc(100vh-120px)] relative">
+        <MapView
+          center={center}
+          quakes={quakes}
+          minMag={minMag}
+          userPos={userPos}
+          radiusKm={radiusKm}
+          onSelect={setSelected}
+        />
+      </div>
+
+      
+
+      <InfoPanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        quakes={quakes}
+        userPos={userPos}
+        onSelect={(q: Quake) => {
+          setSelected(q);
+          // keep panel open so user sees details + can click link,
+          // or close automatically:
+          // setPanelOpen(false);
+        }}
+      />
+      
+      <QuakeDetailsDrawer quake={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }
