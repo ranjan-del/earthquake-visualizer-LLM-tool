@@ -8,8 +8,7 @@ Built using **React**, **Vite**, **Tailwind CSS**, **React Leaflet**, and **Fire
 ---
 
 ## 🚀 Live Demo
-👉 [View the deployed app](https://YOUR_PROJECT_ID.web.app)  
-*(Replace with your actual Firebase Hosting URL once deployed)*
+👉 [View the deployed app](https://earthquake-visualizer.web.app/)  
 
 ---
 
@@ -37,7 +36,6 @@ Built using **React**, **Vite**, **Tailwind CSS**, **React Leaflet**, and **Fire
 | **TanStack Query** | Data fetching and caching |
 | **Firebase Hosting** | Deployment and CDN |
 | **USGS Earthquake GeoJSON API** | Real-time earthquake data |
-| **(Optional)** LLM API (via Firebase Cloud Function) | Natural language explanation |
 
 ---
 
@@ -47,3 +45,25 @@ Built using **React**, **Vite**, **Tailwind CSS**, **React Leaflet**, and **Fire
 ```bash
 git clone https://github.com/YOUR_USERNAME/earthquake-visualizer.git
 cd earthquake-visualizer
+npm install
+npm run dev
+```
+Visit http://localhost:5173 in your browser.
+
+Build in the Production
+```bash
+npm run build
+```
+## Firebase Hosting
+```bash
+firebase login
+firebase use --add
+firebase init hosting
+```
+
+# Deploying
+```bash
+firebase deploy --only hosting
+```
+```
+
